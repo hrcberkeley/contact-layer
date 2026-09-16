@@ -421,10 +421,34 @@ function clusterMarks(byDay, kind) {
     "clusterMarks broke on the 5-day gap rule", marks);
 })();
 
+// Same key build_contact_layer_v2.py's assemble() uses for press_exclusions.csv /
+// press_sentences.csv: norm(text)[:60], mirrored so this file's own editorial
+// review — misfiled or garbled press snippets, caught and corrected once — also
+// covers press_events_combined.csv, which is fetched raw and never touches that
+// Python pass.
+function normKey(s) {
+  return s.normalize("NFKD").replace(/[^\x00-\x7F]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60);
+}
+
 const pressByCountry = new Map();   // country -> { byDay: Map<day,rows>, undated: [] }
 const nameTally = new Map();
 try {
-  const text = await (await fetch("press_events_combined.csv")).text();
+  const [text, exclText, sentText] = await Promise.all([
+    fetch("press_events_combined.csv").then(r => r.text()),
+    fetch("press_exclusions.csv").then(r => r.ok ? r.text() : "").catch(() => ""),
+    fetch("press_sentences.csv").then(r => r.ok ? r.text() : "").catch(() => ""),
+  ]);
+  const excluded = new Set();
+  if (exclText) for (const r of parseCSV(exclText))
+    if (r.decision === "drop" && r.approved.trim().toLowerCase() === "yes")
+      excluded.add(r.country + "|" + r.date + "|" + r.text_key);
+  const rewrites = new Map();
+  if (sentText) for (const r of parseCSV(sentText))
+    if (r.approved.trim().toLowerCase() === "yes")
+      rewrites.set(r.country + "|" + r.date + "|" + r.text_key,
+        { sentence: r.sentence, corrected: r.corrected_date.trim() });
+
   const laneByCountry = new Map(LANES.map(l => [l.country, l]));
   for (const row of parseCSV(text)) {
     if (!laneByCountry.has(row.country)) continue;   // not one of the signatories
@@ -439,11 +463,15 @@ try {
         urls: row.urls.trim().split(/\s+/).filter(u => u.startsWith("http")).slice(0, 8),
       });
     } else if (row.scope === "dated" && row.date) {
+      const key = row.country + "|" + row.date + "|" + normKey(row.summary);
+      if (excluded.has(key)) continue;
+      const rewrite = rewrites.get(key);
       const who = row.officials.split("; ").filter(Boolean);
-      const what = row.summary.slice(0, 180) || row.event.replace(/-/g, " ");
+      const what = (rewrite && rewrite.sentence) || row.summary.slice(0, 180) ||
+        row.event.replace(/-/g, " ");
       const urls = row.urls.trim().split(/\s+/).filter(u => u.startsWith("http"));
       const srcCount = row.sources !== "" ? parseInt(row.sources, 10) : 1;
-      const day = toDay(row.date);
+      const day = toDay(rewrite && rewrite.corrected ? rewrite.corrected : row.date);
       if (!bucket.byDay.has(day)) bucket.byDay.set(day, []);
       bucket.byDay.get(day).push({
         what, event: row.event, who, basis: row.date_basis,
