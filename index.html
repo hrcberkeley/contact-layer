@@ -371,6 +371,13 @@ function splitCSVLine(line) {
   return out;
 }
 
+// Label a corroborating source by its outlet, not by repeating the shared summary
+// four times over — the summary is already shown once above the source list.
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); }
+  catch (e) { return url; }
+}
+
 function parseCSV(text) {
   const lines = text.split(/\r\n|\n/).filter(l => l.length);
   const header = splitCSVLine(lines[0]);
@@ -441,7 +448,7 @@ try {
       bucket.byDay.get(day).push({
         what, event: row.event, who, basis: row.date_basis,
         n: Math.max(urls.length, srcCount),
-        srcs: urls.map(u => ({ url: u, title: what, d: row.date, who: who[0] || "" })),
+        srcs: urls.map(u => ({ url: u, title: hostOf(u), d: row.date, who: who[0] || "" })),
       });
       for (const name of who) nameTally.set(name, (nameTally.get(name) || 0) + 1);
     }
